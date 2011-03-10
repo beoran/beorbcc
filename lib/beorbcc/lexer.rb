@@ -1,5 +1,88 @@
+require 'strscan'
 
-
+module Beorbcc
+  # Lexer class for C.
+  # According to the standard A.1.1
+  class Lexer    
+    def initialize(text)
+      lex_init(text)
+    end
+    
+    def scan(pattern)
+      @last = @scanner.scan(pattern)
+      return @last
+    end
+    
+    def token(type, text = nil, line = nil)
+      text ||= @last
+      line ||= @line      
+      return Token.new(type, text, line)
+    end
+    
+    KEYWORDS = %w{auto break case char const continue default do double else
+		  enum extern float for goto if inline int long register
+		  restrict return short signed sizeof static struct switch
+		  typedef union unsigned void volatile while _Bool _Complex
+		  _Imaginary}
+    
+    def lex_keyword
+      for word in KEYWORDS do
+	re = /#{word}(?![a-zA-Z0-9_])/
+	ok = self.scan(re)
+	return token(:keyword) if ok
+      end
+      return nil
+    end
+    
+    PUNCTUATORS = %w{[ ] ( ) { } . -> ++ -- & * + - ~ ! / % << >> < > <= >= 
+		     ? : ; ... = *= /= %= += -= <<= , # ## <: :> <% %> %: %:%: 
+		     == >>= != &= ^ | ^= && || |=}
+    def lex_punctuator
+      for punc in PUNCTUATORS do
+        re = Regexp.new("\\" + punc.split('').join("\\"))	
+	ok = self.scan(Regexp.new(re))
+	return token(:punctuator) if ok
+      end
+      return nil
+    end
+    
+    def lex_identifier
+      ok = self.scan(/[A-Za-z$@_][A-Za-z0-9$@_]+/)
+      return token(:identifier) if ok
+      return nil
+    end  
+    
+		     
+    def lex_token
+      return lex_keyword || lex_identifier     || 
+	    lex_constant || lex_string_literal || lex_punctuator	    
+    end
+    
+    def lex_preprocessing_token
+      return lex_header_name || lex_identifier      || 
+	    lex_pp_number || lex_character_constant || 
+	    lex_string_literal || lex_punctuator    || lex_non_whitespace	    
+    end
+    
+    def lex_init(text)
+      @lineno  = 0
+      @tokens  = []
+      @scanner = nil 
+      @last    = nil
+      @scanner = StringScanner.new(text)
+    end
+    
+    def lex()
+      lex_token
+      return @tokens
+    end 
+    
+    def self.lex(text)
+      lexer = self.new(text)
+      return lexer.lex
+    end
+  end
+end  
 
 
 =begin
