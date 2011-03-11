@@ -88,7 +88,7 @@ assert { lex_ok('"hello"'   , :lex_string_literal, :string_literal) }
 assert { lex_ok("'\u1234'"  , :lex_character_constant, :character_constant) }
 assert { lex_ok("'\u1234'"  , :lex_constant, :character_constant) }
 assert { lex_ok("1234"      , :lex_constant, :decimal_constant) }
-assert { lex_no("'1234'"    , :lex_character_constant) }
+assert { lex_no("'1234'"    , :lex_integer_constant) }
 
 
 

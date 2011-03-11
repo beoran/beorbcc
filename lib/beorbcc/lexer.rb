@@ -5,12 +5,13 @@ module Beorbcc
   # According to the standard A.1.1
   class Lexer
     def lex_init(text)
-      @line    = 1
-      @coln    = 1
-      @tokens  = []
-      @scanner = nil 
-      @last    = nil
-      @scanner = StringScanner.new(text)
+      @line     = 1
+      @coln     = 1
+      @tokens   = []
+      @pptokens = []
+      @scanner  = nil 
+      @last     = nil
+      @scanner  = StringScanner.new(text)
     end
     
     def initialize(text)
@@ -170,8 +171,8 @@ module Beorbcc
     end
     
     def lex_constant
-      return lex_floating_constant    || 
-             lex_integer_constant     ||
+      return lex_integer_constant     || 
+             lex_floating_constant    ||
              lex_character_constant   ||
              lex_enumeration_constant
              # XXX: I doubt that lex_enumeration_constant will ever be reached 
@@ -193,6 +194,8 @@ module Beorbcc
 	           lex_string_literal || lex_punctuator         || 
              lex_whitespace     || lex_non_whitespace
     end
+    
+    
     
     
     def lex()
