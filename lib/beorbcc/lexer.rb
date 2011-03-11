@@ -3,20 +3,45 @@ require 'strscan'
 module Beorbcc
   # Lexer class for C.
   # According to the standard A.1.1
-  class Lexer    
+  class Lexer
+    def lex_init(text)
+      @line    = 1
+      @coln    = 1
+      @tokens  = []
+      @scanner = nil 
+      @last    = nil
+      @scanner = StringScanner.new(text)
+    end
+    
     def initialize(text)
       lex_init(text)
     end
     
     def scan(pattern)
       @last = @scanner.scan(pattern)
+      if @last
+         # Terribly inefficient way to update line and column number 
+         aid     = @last.split(/\r\n|\n|\r/)
+         lines   = aid.size - 1
+         @line  += lines
+         @coln   = 1 if lines > 1
+         @coln  += aid.last.size
+      end
       return @last
     end
     
-    def token(type, text = nil, line = nil)
+    def token(type, text = nil, line = nil, col = nil)
       text ||= @last
-      line ||= @line      
-      return Token.new(type, text, line)
+      line ||= @line
+      col  ||= @coln
+      return Token.new(type, text, line, col)
+    end
+    
+    # Shorthand for res = scan ; return token(type, res) if res
+    def scan_token(regexp, type)
+      ok = self.scan(regexp)
+      return token(type) if ok
+      return nil
     end
     
     KEYWORDS = %w{auto break case char const continue default do double else
@@ -25,11 +50,11 @@ module Beorbcc
 		  typedef union unsigned void volatile while _Bool _Complex
 		  _Imaginary}
     
-    def lex_keyword
+    def lex_keyword  
       for word in KEYWORDS do
-	re = /#{word}(?![a-zA-Z0-9_])/
-	ok = self.scan(re)
-	return token(:keyword) if ok
+        re = /#{word}(?![a-zA-Z0-9_])/
+	      ok = self.scan(re)
+	      return token(:keyword) if ok
       end
       return nil
     end
@@ -37,40 +62,138 @@ module Beorbcc
     PUNCTUATORS = %w{[ ] ( ) { } . -> ++ -- & * + - ~ ! / % << >> < > <= >= 
 		     ? : ; ... = *= /= %= += -= <<= , # ## <: :> <% %> %: %:%: 
 		     == >>= != &= ^ | ^= && || |=}
+         
     def lex_punctuator
       for punc in PUNCTUATORS do
         re = Regexp.new("\\" + punc.split('').join("\\"))	
-	ok = self.scan(Regexp.new(re))
-	return token(:punctuator) if ok
+        ok = self.scan(Regexp.new(re))
+        return token(:punctuator) if ok
       end
       return nil
     end
     
+    NONDIGIT            = '_a-zA-Z'
+    DIGIT               = '0-9'
+    IMPDEFCHAR          = '$@'
+    IDENTIFIER_NONDIGIT = "#{NONDIGIT}#{IMPDEFCHAR}"
+    IDENTIFIER_CHAR     = "#{NONDIGIT}#{IMPDEFCHAR}#{DIGIT}"
+    NONZERO_DIGIT       = "1-9"
+    OCTAL_DIGIT         = "0-7"
+    HEXADECIMAL_DIGIT   = "0-9A-Fa-f"    
+    HEX_QUAD            = "[#{HEXADECIMAL_DIGIT}]{4}"
+    
+    # XXX: unicode names, eg  f_\\uf00f_oo not supported yet.
     def lex_identifier
-      ok = self.scan(/[A-Za-z$@_][A-Za-z0-9$@_]+/)
+      ok = self.scan(/[#{IDENTIFIER_NONDIGIT}][#{IDENTIFIER_CHAR}]+/)
       return token(:identifier) if ok
       return nil
-    end  
+    end
     
+    INTEGER_LOOKAHEAD = "(?![a-zA-Z0-9_\.])"
+    INTEGER_SUFFIX = "(([uU][lL]?|[uU]?[lL][lL]|[lL][uU]?|[lL][lL][uU]?))?#{INTEGER_LOOKAHEAD}"
+    
+    RE_DECIMAL_CONSTANT = /[#{NONZERO_DIGIT}][#{DIGIT}]+#{INTEGER_SUFFIX}/
+    
+    def lex_decimal_constant      
+      scan_token(RE_DECIMAL_CONSTANT, :decimal_constant)
+    end
+    
+    RE_HEXADECIMAL_CONSTANT = /(0x|0X)[#{HEXADECIMAL_DIGIT}]+#{INTEGER_SUFFIX}/
+    
+    def lex_hexadecimal_constant
+      scan_token(RE_HEXADECIMAL_CONSTANT, :hexadecimal_constant)
+    end
+    
+    RE_OCTAL_CONSTANT = /0[#{OCTAL_DIGIT}]+#{INTEGER_SUFFIX}/
+    
+    def lex_octal_constant
+      scan_token(RE_OCTAL_CONSTANT, :octal_constant)
+    end
+    
+    FRACTIONAL_CONSTANT = "[0-9]+\.[0-9]*|[0-9]*\.[0-9]+"
+    EXPONENTIAL_PART    = "[eE][\-\+]?[0-9]+"
+    FLOATING_SUFFIX     = "[flFL]"
+    
+    
+#     fractional-constant exponent-partopt ﬂoating-sufﬁxopt
+# digit-sequence exponent-part ﬂoating-sufﬁxopt
+    FLOAT_CONST_1 = "#{FRACTIONAL_CONSTANT}(#{EXPONENTIAL_PART})?(#{FLOATING_SUFFIX})?"
+    FLOAT_CONST_2 = "[0-9]+#{EXPONENTIAL_PART}(#{FLOATING_SUFFIX})?"
+
+    RE_FLOATING_CONSTANT = /(#{FLOAT_CONST_1}|#{FLOAT_CONST_2})#{INTEGER_LOOKAHEAD}/
+    # XXX: hexadecimal_floating_constant not supported
+    def lex_floating_constant
+      scan_token(RE_FLOATING_CONSTANT, :floating_constant)
+    end
+
+    def lex_integer_constant
+      return lex_decimal_constant || lex_hexadecimal_constant || lex_octal_constant
+    end
+    
+    def lex_enumeration_constant
+      return lex_identifier
+    end
+    
+    RE_CHARACTER_CONSTANT = %r{'([^'\\]|\\.)*'}
+    def lex_character_constant
+      scan_token(RE_CHARACTER_CONSTANT, :character_constant)
+    end
+    
+    RE_STRING_LITERAL = %r{"([^"\\]|\\.)*"}
+    def lex_string_literal
+      scan_token(RE_STRING_LITERAL, :string_literal)
+    end
+    
+    RE_LOCAL_HEADER = %r{"([^"\\]|\\.)*"}
+    def lex_local_header
+      scan_token(RE_LOCAL_HEADER, :header_name)
+    end
+        
+    RE_REMOTE_HEADER = %r{<([^>\\]|\\.)*>}
+    def lex_local_header
+      scan_token(RE_LOCAL_HEADER, :header_name)
+    end
+        
+    RE_PP_NUMBER = %r{([0-9]|\.[0-9])[0-9eEpP\+\-\.]+ }    
+    def lex_pp_number
+      scan_token(RE_PP_NUMBER_HEADER, :pp_number)
+    end
+
+    RE_WHITESPACE = %r{[ \t\n\r]+}
+    def lex_whitespace()
+      scan_token(RE_WHITESPACE, :whitespace)
+    end
+    
+    RE_NON_WHITESPACE = %r{.}
+    def lex_non_whitespace()
+      scan_token(RE_NON_WHITESPACE, :non_whitespace)
+    end
+    
+    def lex_constant
+      return lex_floating_constant    || 
+             lex_integer_constant     ||
+             lex_character_constant   ||
+             lex_enumeration_constant
+             # XXX: I doubt that lex_enumeration_constant will ever be reached 
+    end
+    
+    def lex_header_name
+      return lex_remote_header || lex_local_header
+    end
 		     
     def lex_token
-      return lex_keyword || lex_identifier     || 
-	    lex_constant || lex_string_literal || lex_punctuator	    
+      return lex_keyword      || lex_identifier     || 
+	           lex_constant     || lex_string_literal || 
+             lex_punctuator   || lex_whitespace
     end
     
     def lex_preprocessing_token
-      return lex_header_name || lex_identifier      || 
-	    lex_pp_number || lex_character_constant || 
-	    lex_string_literal || lex_punctuator    || lex_non_whitespace	    
+      return lex_header_name    || lex_identifier         || 
+	           lex_pp_number      || lex_character_constant || 
+	           lex_string_literal || lex_punctuator         || 
+             lex_whitespace     || lex_non_whitespace
     end
     
-    def lex_init(text)
-      @lineno  = 0
-      @tokens  = []
-      @scanner = nil 
-      @last    = nil
-      @scanner = StringScanner.new(text)
-    end
     
     def lex()
       lex_token
